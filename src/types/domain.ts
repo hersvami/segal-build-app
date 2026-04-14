@@ -7,6 +7,12 @@ export interface Company {
   phone: string;
   email: string;
   logo: string;
+  // New: pricing defaults per company
+  defaultOverheadPercent?: number;
+  defaultProfitPercent?: number;
+  licenceNumber?: string;
+  builderRegistration?: string;
+  warrantyInsurer?: string;
 }
 
 export interface TradeLine {
@@ -27,6 +33,11 @@ export interface JobStage {
   trade: string;
   code?: string;
   isSelected: boolean;
+  // New: Rawlinsons unit-rate fields
+  quantity?: number;
+  unit?: string;           // "m²", "lm", "item", "allow"
+  unitRate?: number;        // Rawlinsons base rate
+  rateSource?: string;      // "rawlinsons" | "cordell" | "custom"
 }
 
 export interface Solution {
@@ -45,7 +56,7 @@ export interface SmartAnswer {
   question: string;
   answer: string;
   options: string[];
-  category: "General" | "Demolition" | "Services" | "Joinery" | "Finishes";
+  category: "General" | "Demolition" | "Services" | "Joinery" | "Finishes" | string;
 }
 
 export interface PhotoItem {
@@ -65,12 +76,87 @@ export interface Message {
   variationId?: string;
 }
 
+// ========================================
+// NEW: Multi-scope quote model
+// ========================================
+
+export interface PCItem {
+  id: string;
+  description: string;
+  allowance: number;
+  unit: string;            // "each", "m²", "lm", "allow"
+  actualCost?: number;     // filled in when customer selects
+  suppliedBy?: "builder" | "customer";
+  note?: string;
+}
+
+export interface InclusionItem {
+  id: string;
+  text: string;
+  isDefault: boolean;      // from category template
+}
+
+export interface ExclusionItem {
+  id: string;
+  text: string;
+  isDefault: boolean;      // from category template
+}
+
+export interface QuoteScope {
+  id: string;
+  categoryId: string;      // links to category file (e.g. "wetAreas", "kitchen")
+  label: string;           // display name (e.g. "Main Bathroom", "Kitchen")
+  description?: string;    // optional scope notes
+  dimensions?: {
+    length: number;
+    width: number;
+    height: number;
+  };
+  answers: SmartAnswer[];
+  stages: JobStage[];
+  pcItems: PCItem[];
+  inclusions: InclusionItem[];
+  exclusions: ExclusionItem[];
+  // Calculated totals for this scope
+  tradeCost: number;       // sum of all stage builderCosts
+  overheadAmount: number;
+  profitAmount: number;
+  clientPrice: number;     // tradeCost + overhead + profit
+}
+
+// ========================================
+// NEW: Quote pricing summary
+// ========================================
+
+export interface QuotePricing {
+  overheadPercent: number;   // default 12
+  profitPercent: number;     // default 15
+  contingencyPercent: number; // default 10 for reno, 5 for new build
+  gstPercent: number;        // always 10 in Australia
+  // Per-trade overrides
+  tradeMargins?: Record<string, { overheadPercent?: number; profitPercent?: number }>;
+  // Calculated
+  totalTradeCost: number;
+  totalOverhead: number;
+  totalProfit: number;
+  subtotalExGst: number;
+  contingencyAmount: number;
+  totalBeforeGst: number;
+  gstAmount: number;
+  totalIncGst: number;
+}
+
+// ========================================
+// UPDATED: Variation now supports multi-scope
+// ========================================
+
 export interface Variation {
   id: string;
   mode: "quote" | "variation";
   title: string;
   description: string;
   elaboratedDescription: string;
+  // Legacy single-room fields (kept for backward compat)
   roomType: string;
   dimensions: {
     length: number;
@@ -81,6 +167,7 @@ export interface Variation {
   photos: PhotoItem[];
   solutions: Solution[];
   selectedSolution: number;
+  // Status
   status: "draft" | "pending" | "approved" | "rejected" | "invoiced";
   customerComment: string;
   rejectionReason: string;
@@ -89,10 +176,20 @@ export interface Variation {
   sentAt?: string;
   approvedAt?: string;
   rejectedAt?: string;
+  // Change tracking
   changeLog?: ChangeLogEntry[];
+  // Progress tracking
   progressPhotos?: ProgressPhoto[];
   progressUpdates?: ProgressUpdate[];
   stageProgress?: Record<string, string>;
+  // NEW: Multi-scope support
+  scopes?: QuoteScope[];
+  pricing?: QuotePricing;
+  // NEW: Quote-wide inclusions/exclusions
+  globalInclusions?: InclusionItem[];
+  globalExclusions?: ExclusionItem[];
+  // NEW: Quote-wide PC items
+  globalPCItems?: PCItem[];
 }
 
 export interface ChangeLogEntry {

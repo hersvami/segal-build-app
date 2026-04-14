@@ -10,6 +10,11 @@ export const COMPANIES: Record<string, Company> = {
     phone: "0414 222 203",
     email: "james@thesegals.com.au",
     logo: "https://raw.githubusercontent.com/hersvami/segal-build-app/main/public/logos/segal-build.png",
+    defaultOverheadPercent: 12,
+    defaultProfitPercent: 15,
+    licenceNumber: "DB-U 67541",
+    builderRegistration: "CDB-U 67541",
+    warrantyInsurer: "VMIA",
   },
   segval: {
     id: "segval",
@@ -20,5 +25,7 @@ export const COMPANIES: Record<string, Company> = {
     phone: "0414 222 203",
     email: "hello@segval.com.au",
     logo: "https://raw.githubusercontent.com/hersvami/segal-build-app/main/public/logos/segval.png",
+    defaultOverheadPercent: 12,
+    defaultProfitPercent: 15,
   },
 };

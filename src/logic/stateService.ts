@@ -1,6 +1,8 @@
 import type { AppState } from "../types/appState";
 
-const STORAGE_KEY = "segal_build_modular_state_v1";
+const APP_VERSION = "2.0";
+const STORAGE_KEY = "segal_build_modular_state_v2";
+const VERSION_KEY = "segal_build_app_version";
 
 export function createEmptyState(): AppState {
   return {
@@ -12,6 +14,17 @@ export function createEmptyState(): AppState {
 }
 
 export function loadState(): AppState | null {
+  // Check version — if old version, clear and start fresh
+  const savedVersion = localStorage.getItem(VERSION_KEY);
+  if (savedVersion !== APP_VERSION) {
+    // Clear old state from any previous version keys
+    localStorage.removeItem("segal_build_modular_state_v1");
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.setItem(VERSION_KEY, APP_VERSION);
+    console.log(`App upgraded to v${APP_VERSION} — cleared old state`);
+    return null;
+  }
+
   const raw = localStorage.getItem(STORAGE_KEY);
   if (!raw) return null;
 
@@ -45,4 +58,5 @@ export function loadState(): AppState | null {
 
 export function saveState(state: AppState): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  localStorage.setItem(VERSION_KEY, APP_VERSION);
 }

@@ -22,3 +22,37 @@ export type {
   ScopeQuestion,
   RecognisedScope,
 } from "./scopeRecogniser";
+export {
+  calculateStage,
+  calculateScope,
+  calculateQuote,
+  generateQuotePricing,
+  applyPricingToVariation,
+  suggestContingency,
+  formatCurrency,
+  formatCompact,
+} from "./quoteCalculator";
+export type {
+  StageCalculation,
+  ScopeCalculation,
+  QuoteCalculation,
+} from "./quoteCalculator";
+export {
+  ALL_CATEGORIES,
+  CATEGORY_MAP,
+  getCategoryById,
+  searchCategories,
+  CATEGORY_GROUPS,
+} from "./categories";
+export {
+  getRelatedCategories,
+  getAutoAddCategories,
+  getSuggestedCategories,
+  buildFullScopeChain,
+} from "./categoryRelations";
+export type { CategoryRelation } from "./categoryRelations";
+export {
+  getDefaultPCItems,
+  getDefaultInclusions,
+  getDefaultExclusions,
+} from "./quoteDefaults";

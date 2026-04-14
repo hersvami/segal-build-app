@@ -1,4 +1,4 @@
-import type { StageTemplate } from "./types";
+import type { StageTemplate } from "../types";
 
 export const structuralStages: StageTemplate[] = [
   { name: "Site setup and protection", description: "Full site setup including propping", trade: "Site Prep", unitRate: 650, unitType: "allow", durationDays: 1, code: "NCC 2022", order: 10, isFixed: true },

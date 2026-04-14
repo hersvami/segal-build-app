@@ -32,7 +32,7 @@ export function buildProject(payload: CreateProjectPayload): Project {
 export function addVariationToProject(
   projects: Project[],
   projectId: string,
-  variation: Variation,
+  variation: Variation
 ): Project[] {
   return projects.map((project) => {
     if (project.id !== projectId) return project;
@@ -49,7 +49,7 @@ export function setVariationStatus(
   projectId: string,
   variationId: string,
   status: Variation["status"],
-  comment = "",
+  comment = ""
 ): Project[] {
   return projects.map((project) => {
     if (project.id !== projectId) return project;
@@ -57,7 +57,9 @@ export function setVariationStatus(
     return {
       ...project,
       variations: project.variations.map((variation) =>
-        variation.id === variationId ? { ...variation, status, customerComment: comment } : variation,
+        variation.id === variationId
+          ? { ...variation, status, customerComment: comment }
+          : variation
       ),
     };
   });

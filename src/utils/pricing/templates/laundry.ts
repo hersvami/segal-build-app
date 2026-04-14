@@ -1,4 +1,4 @@
-import type { StageTemplate } from "./types";
+import type { StageTemplate } from "../types";
 
 export const laundryStages: StageTemplate[] = [
   { name: "Site setup and protection", description: "Dust barriers, floor protection", trade: "Site Prep", unitRate: 350, unitType: "allow", durationDays: 1, code: "NCC 2022", order: 10, isFixed: true },

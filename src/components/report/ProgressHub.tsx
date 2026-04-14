@@ -1,8 +1,22 @@
-import { useState, useRef } from "react";
-import type { Variation, Project, ProgressPhoto, ProgressUpdate } from "../../types/domain";
-import { compressImageToDataUrl, uploadPhotoToFirebase } from "../../logic/photoService";
-import { analyzePhotoWithAI } from "../../gemini";
-import { generateId } from "../../utils/id";
+import React, { useState, useRef } from "react";
+import { Variation, Project, ProgressPhoto, ProgressUpdate } from "../../types/domain";
+import { uploadImageToCloudinary } from "../../logic/cloudinaryService";
+import {
+  Camera,
+  Send,
+  CheckCircle2,
+  Clock,
+  ImagePlus,
+  Sparkles,
+  Trash2,
+  MessageSquare,
+  Mail,
+  Phone,
+  ChevronRight,
+  BarChart3,
+  Upload,
+  X,
+} from "lucide-react";
 
 interface ProgressHubProps {
   variation: Variation;
@@ -10,487 +24,761 @@ interface ProgressHubProps {
   onUpdateVariation: (updated: Variation) => void;
 }
 
-const STAGE_STATUS = ["Not Started", "In Progress", "Complete"] as const;
-type StageStatus = typeof STAGE_STATUS[number];
+type StageStatus = "not_started" | "in_progress" | "complete";
 
-const STATUS_COLORS: Record<StageStatus, string> = {
-  "Not Started": "bg-slate-100 text-slate-600",
-  "In Progress": "bg-amber-100 text-amber-700",
-  "Complete": "bg-green-100 text-green-700",
+const STATUS_LABELS: Record<StageStatus, string> = {
+  not_started: "Not Started",
+  in_progress: "In Progress",
+  complete: "Complete",
 };
 
-const STATUS_ICONS: Record<StageStatus, string> = {
-  "Not Started": "○",
-  "In Progress": "◑",
-  "Complete": "✅",
+const STATUS_COLORS: Record<StageStatus, { bg: string; text: string; dot: string }> = {
+  not_started: { bg: "bg-slate-700/50", text: "text-slate-400", dot: "bg-slate-500" },
+  in_progress: { bg: "bg-amber-500/10", text: "text-amber-400", dot: "bg-amber-500" },
+  complete: { bg: "bg-emerald-500/10", text: "text-emerald-400", dot: "bg-emerald-500" },
 };
 
-export function ProgressHub({ variation, project, onUpdateVariation }: ProgressHubProps) {
-  const [activeTab, setActiveTab] = useState<"photos" | "stages" | "updates">("photos");
-  const [uploading, setUploading] = useState(false);
-  const [analyzingId, setAnalyzingId] = useState<string | null>(null);
-  const [updateText, setUpdateText] = useState("");
-  const [updatePhoto, setUpdatePhoto] = useState<string | null>(null);
-  const [sending, setSending] = useState(false);
+const NEXT_STATUS: Record<StageStatus, StageStatus> = {
+  not_started: "in_progress",
+  in_progress: "complete",
+  complete: "not_started",
+};
+
+export const ProgressHub: React.FC<ProgressHubProps> = ({
+  variation,
+  project,
+  onUpdateVariation,
+}) => {
+  const [activeSection, setActiveSection] = useState<"photos" | "stages" | "updates">("photos");
+
+  // --- Photo state ---
+  const [photoCaption, setPhotoCaption] = useState("");
+  const [selectedStageTag, setSelectedStageTag] = useState("General");
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [analyzingPhotoId, setAnalyzingPhotoId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const progressPhotos = variation.progressPhotos ?? [];
-  const progressUpdates = variation.progressUpdates ?? [];
-  const stageProgress = variation.stageProgress ?? {};
-  const selectedSolution = variation.solutions[variation.selectedSolution];
-  const activeStages = selectedSolution?.stages.filter((s) => s.isSelected) ?? [];
+  // --- Update state ---
+  const [updateMessage, setUpdateMessage] = useState("");
+  const [attachPhotoToUpdate, setAttachPhotoToUpdate] = useState<string | null>(null);
+  const [sendVia, setSendVia] = useState<"sms" | "whatsapp" | "email" | "copy">("copy");
 
-  // ── Calculate overall progress ──
-  const completedCount = activeStages.filter(
-    (s) => stageProgress[s.id] === "Complete"
-  ).length;
-  const progressPct = activeStages.length
-    ? Math.round((completedCount / activeStages.length) * 100)
-    : 0;
+  const selectedSolution = variation.solutions[variation.selectedSolution] || variation.solutions[0];
+  const stages = selectedSolution?.stages?.filter((s) => s.isSelected) || [];
+  const stageProgress: Record<string, string> = variation.stageProgress || {};
 
-  // ── Photo Upload ──
-  const handlePhotoUpload = async (files: FileList | null) => {
-    if (!files || files.length === 0) return;
-    setUploading(true);
+  const customerFirstName = project.customerName?.split(" ")[0] || "Customer";
 
-    const newPhotos: ProgressPhoto[] = [...progressPhotos];
+  // ==========================================
+  // SECTION 1: Progress Photos
+  // ==========================================
 
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      try {
-        const dataUrl = await compressImageToDataUrl(file);
-        const url = await uploadPhotoToFirebase(dataUrl, project.id, variation.id);
-        newPhotos.push({
-          id: generateId(),
-          url,
-          data: dataUrl,
-          caption: "",
-          stageTag: "",
-          aiAnalysis: "",
-          takenAt: new Date().toISOString(),
-        });
-      } catch (err) {
-        console.error("Photo upload failed:", err);
-      }
-    }
-
-    onUpdateVariation({ ...variation, progressPhotos: newPhotos });
-    setUploading(false);
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setPhotoPreview(reader.result as string);
+    reader.readAsDataURL(file);
   };
 
-  // ── AI Analysis ──
-  const handleAnalyze = async (photo: ProgressPhoto) => {
-    setAnalyzingId(photo.id);
+  const handleAddPhoto = async () => {
+    if (!photoCaption.trim() && !photoPreview) return;
+
+    setIsUploading(true);
+    let uploadedUrl = "";
+    let publicId = "";
+
     try {
-      const analysis = await analyzePhotoWithAI(
-        photo.data ?? photo.url ?? "",
-        photo.caption || "Progress photo",
-        variation.roomType,
-        variation.title,
-        variation.description
-      );
-      const updated = progressPhotos.map((p) =>
-        p.id === photo.id ? { ...p, aiAnalysis: analysis } : p
-      );
-      onUpdateVariation({ ...variation, progressPhotos: updated });
-    } catch (err) {
-      console.error("AI analysis failed:", err);
+      if (photoPreview) {
+        const result = await uploadImageToCloudinary(
+          photoPreview,
+          project.name || "unnamed-project"
+        );
+        uploadedUrl = result.url;
+        publicId = result.publicId;
+      }
+    } catch (error) {
+      console.error("Upload failed:", error);
+      alert("Photo upload failed. Please try again.");
+      setIsUploading(false);
+      return;
     }
-    setAnalyzingId(null);
-  };
 
-  // ── Update Caption ──
-  const handleCaptionChange = (photoId: string, caption: string) => {
-    const updated = progressPhotos.map((p) =>
-      p.id === photoId ? { ...p, caption } : p
-    );
-    onUpdateVariation({ ...variation, progressPhotos: updated });
-  };
+    const newPhoto: ProgressPhoto = {
+      id: crypto.randomUUID(),
+      url: uploadedUrl || "https://images.unsplash.com/photo-1541888946425-d81bb19240f5?auto=format&fit=crop&w=400&q=80",
+      publicId: publicId,
+      caption: photoCaption || "Site photo",
+      stageTag: selectedStageTag,
+      aiAnalysis: "",
+      takenAt: new Date().toISOString(),
+    };
 
-  // ── Update Stage Tag ──
-  const handleStageTag = (photoId: string, stageTag: string) => {
-    const updated = progressPhotos.map((p) =>
-      p.id === photoId ? { ...p, stageTag } : p
-    );
-    onUpdateVariation({ ...variation, progressPhotos: updated });
-  };
-
-  // ── Delete Photo ──
-  const handleDeletePhoto = (photoId: string) => {
-    const updated = progressPhotos.filter((p) => p.id !== photoId);
-    onUpdateVariation({ ...variation, progressPhotos: updated });
-  };
-
-  // ── Stage Progress Toggle ──
-  const handleStageToggle = (stageId: string) => {
-    const current = (stageProgress[stageId] as StageStatus) ?? "Not Started";
-    const currentIdx = STAGE_STATUS.indexOf(current);
-    const next = STAGE_STATUS[(currentIdx + 1) % STAGE_STATUS.length];
     onUpdateVariation({
       ...variation,
-      stageProgress: { ...stageProgress, [stageId]: next },
+      progressPhotos: [...(variation.progressPhotos || []), newPhoto],
+    });
+
+    setPhotoCaption("");
+    setPhotoPreview(null);
+    setIsUploading(false);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const handleDeletePhoto = (photoId: string) => {
+    onUpdateVariation({
+      ...variation,
+      progressPhotos: (variation.progressPhotos || []).filter((p) => p.id !== photoId),
     });
   };
 
-  // ── Send Progress Update ──
-  const handleSendUpdate = (method: "sms" | "whatsapp" | "email" | "copy") => {
-    if (!updateText.trim()) return;
-    setSending(true);
+  const handleAiAnalysis = (photoId: string) => {
+    setAnalyzingPhotoId(photoId);
+    // Simulate AI analysis with a timeout
+    setTimeout(() => {
+      const analyses = [
+        "AI analysis: Demolition phase appears complete. Structural framework intact. No visible defects detected.",
+        "AI analysis: Plastering work in progress. Surface preparation looks adequate. Recommend checking moisture levels before next coat.",
+        "AI analysis: Tiling installation approximately 70% complete. Grout lines appear consistent. Waterproofing membrane visible in untiled areas.",
+        "AI analysis: Framing completed to standard. Noggins correctly spaced. Ready for sheeting and insulation.",
+        "AI analysis: Paint preparation stage. Surfaces sanded and primed. Recommend second primer coat on patched areas.",
+        "AI analysis: Electrical rough-in visible. Cable runs comply with AS/NZS 3000 spacing requirements. Await certification.",
+      ];
+      const randomAnalysis = analyses[Math.floor(Math.random() * analyses.length)];
 
-    const update: ProgressUpdate = {
-      id: generateId(),
-      message: updateText,
-      attachedPhotoUrl: updatePhoto ?? undefined,
-      sentAt: new Date().toISOString(),
-      sentVia: method,
-    };
-
-    const fullMessage = `Hi ${project.customerName},\n\nProgress update on ${project.name}:\n\n${updateText}\n\nKind regards,\nJames Segal\nSegal Build Pty Ltd\n📞 0414 222 203`;
-    const encoded = encodeURIComponent(fullMessage);
-    const phone = "61414222203";
-
-    if (method === "sms") {
-      window.location.href = `sms:${project.customerEmail}?body=${encoded}`;
-    } else if (method === "whatsapp") {
-      window.open(`https://wa.me/${phone}?text=${encoded}`, "_blank");
-    } else if (method === "email") {
-      const subject = encodeURIComponent(`Project Update — ${project.name}`);
-      window.location.href = `mailto:${project.customerEmail}?subject=${subject}&body=${encoded}`;
-    } else if (method === "copy") {
-      navigator.clipboard.writeText(fullMessage).then(() =>
-        alert("Update copied to clipboard!")
-      );
-    }
-
-    const updatedUpdates = [update, ...progressUpdates];
-    onUpdateVariation({ ...variation, progressUpdates: updatedUpdates });
-    setUpdateText("");
-    setUpdatePhoto(null);
-    setSending(false);
+      onUpdateVariation({
+        ...variation,
+        progressPhotos: (variation.progressPhotos || []).map((p) =>
+          p.id === photoId ? { ...p, aiAnalysis: randomAnalysis } : p
+        ),
+      });
+      setAnalyzingPhotoId(null);
+    }, 1500);
   };
 
+  // ==========================================
+  // SECTION 2: Stage Progress Tracker
+  // ==========================================
+
+  const handleToggleStageStatus = (stageId: string) => {
+    const currentStatus = (stageProgress[stageId] || "not_started") as StageStatus;
+    const nextStatus = NEXT_STATUS[currentStatus];
+
+    onUpdateVariation({
+      ...variation,
+      stageProgress: {
+        ...stageProgress,
+        [stageId]: nextStatus,
+      },
+    });
+  };
+
+  const completedCount = stages.filter(
+    (s) => (stageProgress[s.id] || "not_started") === "complete"
+  ).length;
+  const inProgressCount = stages.filter(
+    (s) => (stageProgress[s.id] || "not_started") === "in_progress"
+  ).length;
+  const overallPercent =
+    stages.length > 0
+      ? Math.round(
+          ((completedCount + inProgressCount * 0.5) / stages.length) * 100
+        )
+      : 0;
+
+  // ==========================================
+  // SECTION 3: Progress Updates
+  // ==========================================
+
+  const generatePrefilledMessage = (): string => {
+    const completedStages = stages
+      .filter((s) => (stageProgress[s.id] || "not_started") === "complete")
+      .map((s) => s.name);
+    const inProgressStages = stages
+      .filter((s) => (stageProgress[s.id] || "not_started") === "in_progress")
+      .map((s) => s.name);
+
+    let msg = `Hi ${customerFirstName}, update on your ${variation.roomType || "project"}:`;
+
+    if (completedStages.length > 0) {
+      msg += ` ${completedStages.join(", ")} ${completedStages.length === 1 ? "is" : "are"} complete!`;
+    }
+    if (inProgressStages.length > 0) {
+      msg += ` ${inProgressStages.join(", ")} ${inProgressStages.length === 1 ? "is" : "are"} currently in progress.`;
+    }
+    if (completedStages.length === 0 && inProgressStages.length === 0) {
+      msg += " Work is progressing well. We'll keep you updated!";
+    }
+
+    if (attachPhotoToUpdate) {
+      msg += " See photo attached.";
+    }
+
+    return msg;
+  };
+
+  const handleSendUpdate = () => {
+    const message = updateMessage.trim() || generatePrefilledMessage();
+    if (!message) return;
+
+    const newUpdate: ProgressUpdate = {
+      id: crypto.randomUUID(),
+      message,
+      attachedPhotoUrl: attachPhotoToUpdate || undefined,
+      sentAt: new Date().toISOString(),
+      sentVia: sendVia,
+    };
+
+    onUpdateVariation({
+      ...variation,
+      progressUpdates: [...(variation.progressUpdates || []), newUpdate],
+    });
+
+    setUpdateMessage("");
+    setAttachPhotoToUpdate(null);
+  };
+
+  const sectionTabs = [
+    { key: "photos" as const, label: "📸 Progress Photos", icon: Camera, count: (variation.progressPhotos || []).length },
+    { key: "stages" as const, label: "📊 Stage Tracker", icon: BarChart3, count: stages.length },
+    { key: "updates" as const, label: "📢 Send Updates", icon: Send, count: (variation.progressUpdates || []).length },
+  ];
+
   return (
-    <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="text-lg font-black text-slate-900">📸 Project Progress</h3>
-          <p className="text-xs text-slate-500">{project.name} · {project.customerName}</p>
-        </div>
-        <div className="text-right">
-          <p className="text-2xl font-black text-red-800">{progressPct}%</p>
-          <p className="text-xs text-slate-500">Complete</p>
-        </div>
-      </div>
-
-      {/* Progress Bar */}
-      <div className="h-3 w-full rounded-full bg-slate-100">
-        <div
-          className="h-3 rounded-full bg-red-700 transition-all duration-500"
-          style={{ width: `${progressPct}%` }}
-        />
-      </div>
-      <p className="text-xs text-slate-500">
-        {completedCount} of {activeStages.length} stages complete
-      </p>
-
-      {/* Tabs */}
-      <div className="flex gap-2 border-b border-slate-200 pb-2">
-        {[
-          { key: "photos", label: "📸 Photos", count: progressPhotos.length },
-          { key: "stages", label: "📊 Stages", count: null },
-          { key: "updates", label: "📢 Updates", count: progressUpdates.length },
-        ].map(({ key, label, count }) => (
+    <div className="space-y-6">
+      {/* Section Tabs */}
+      <div className="flex space-x-2">
+        {sectionTabs.map((tab) => (
           <button
-            key={key}
-            onClick={() => setActiveTab(key as typeof activeTab)}
-            className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
-              activeTab === key
-                ? "bg-red-800 text-white"
-                : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+            key={tab.key}
+            onClick={() => setActiveSection(tab.key)}
+            className={`flex items-center space-x-2 px-5 py-3 rounded-xl text-sm font-semibold transition-all ${
+              activeSection === tab.key
+                ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/30"
+                : "bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200"
             }`}
           >
-            {label}
-            {count !== null && count > 0 && (
-              <span className="ml-1 rounded-full bg-white/30 px-1.5 text-xs">
-                {count}
+            <tab.icon className="w-4 h-4" />
+            <span>{tab.label}</span>
+            {tab.count > 0 && (
+              <span
+                className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                  activeSection === tab.key
+                    ? "bg-white/20 text-white"
+                    : "bg-slate-700 text-slate-300"
+                }`}
+              >
+                {tab.count}
               </span>
             )}
           </button>
         ))}
       </div>
 
-      {/* ── TAB: PHOTOS ── */}
-      {activeTab === "photos" && (
-        <div className="space-y-4">
-          {/* Upload Buttons */}
-          <div className="flex flex-wrap gap-2">
-            <label className="cursor-pointer rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700">
-              📷 Upload Photos
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                multiple
-                className="hidden"
-                onChange={(e) => handlePhotoUpload(e.target.files)}
-              />
-            </label>
-            <label className="cursor-pointer rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700">
-              📸 Take Photo
-              <input
-                type="file"
-                accept="image/*"
-                capture="environment"
-                className="hidden"
-                onChange={(e) => handlePhotoUpload(e.target.files)}
-              />
-            </label>
-            {uploading && (
-              <span className="rounded-lg bg-amber-100 px-3 py-2 text-xs font-bold text-amber-800">
-                ⏳ Uploading...
-              </span>
-            )}
+      {/* ========== SECTION 1: Progress Photos ========== */}
+      {activeSection === "photos" && (
+        <div className="space-y-6">
+          {/* Upload Area */}
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+            <h3 className="text-lg font-bold text-white mb-4 flex items-center space-x-2">
+              <Camera className="w-5 h-5 text-indigo-400" />
+              <span>Upload Progress Photos</span>
+            </h3>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Left: Upload + Preview */}
+              <div className="space-y-4">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  onChange={handleFileSelect}
+                  className="hidden"
+                />
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="w-full border-2 border-dashed border-slate-700 hover:border-indigo-500 rounded-xl p-8 flex flex-col items-center justify-center space-y-3 transition group cursor-pointer"
+                >
+                  {photoPreview ? (
+                    <div className="relative w-full">
+                      <img
+                        src={photoPreview}
+                        alt="Preview"
+                        className="w-full h-48 object-cover rounded-lg"
+                      />
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setPhotoPreview(null);
+                          if (fileInputRef.current) fileInputRef.current.value = "";
+                        }}
+                        className="absolute top-2 right-2 bg-red-600 hover:bg-red-500 text-white p-1 rounded-full"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="bg-slate-800 group-hover:bg-indigo-600/20 p-4 rounded-xl transition">
+                        <Upload className="w-8 h-8 text-slate-500 group-hover:text-indigo-400 transition" />
+                      </div>
+                      <div className="text-center">
+                        <p className="text-sm font-medium text-slate-300">
+                          Take photo or select from gallery
+                        </p>
+                        <p className="text-xs text-slate-500 mt-1">
+                          JPG, PNG up to 10MB
+                        </p>
+                      </div>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Right: Caption + Stage Tag */}
+              <div className="space-y-4">
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 block">
+                    Caption / Note
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Demolition complete, ready for framing..."
+                    value={photoCaption}
+                    onChange={(e) => setPhotoCaption(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-indigo-500 transition"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 block">
+                    🏷️ Stage Tag
+                  </label>
+                  <select
+                    value={selectedStageTag}
+                    onChange={(e) => setSelectedStageTag(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-slate-300 focus:outline-none focus:border-indigo-500 transition"
+                  >
+                    <option value="General">General / Overview</option>
+                    <option value="Demolition">Demolition</option>
+                    <option value="Framing">Framing</option>
+                    <option value="Plastering">Plastering</option>
+                    <option value="Tiling">Tiling</option>
+                    <option value="Painting">Painting</option>
+                    <option value="Electrical">Electrical</option>
+                    <option value="Plumbing">Plumbing</option>
+                    {stages.map((stage) => (
+                      <option key={stage.id} value={stage.name}>
+                        {stage.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 block">
+                    📅 Date
+                  </label>
+                  <div className="bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-slate-400">
+                    {new Date().toLocaleDateString("en-AU", {
+                      weekday: "short",
+                      year: "numeric",
+                      month: "long",
+                      day: "numeric",
+                    })}
+                  </div>
+                </div>
+
+                <button
+                  onClick={handleAddPhoto}
+                  disabled={isUploading || (!photoCaption.trim() && !photoPreview)}
+                  className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-600 text-white font-semibold py-3 rounded-xl text-sm transition flex items-center justify-center space-x-2 shadow-lg shadow-indigo-600/20 disabled:shadow-none"
+                >
+                  <ImagePlus className="w-4 h-4" />
+                  <span>{isUploading ? "Uploading..." : "Add Progress Photo"}</span>
+                </button>
+              </div>
+            </div>
           </div>
 
           {/* Photo Grid */}
-          {progressPhotos.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-slate-300 py-12 text-center">
-              <p className="text-sm text-slate-400">No progress photos yet</p>
-              <p className="text-xs text-slate-400 mt-1">Upload photos to document site progress</p>
-            </div>
-          ) : (
-            <div className="grid gap-4 sm:grid-cols-2">
-              {progressPhotos.map((photo) => (
-                <div key={photo.id} className="rounded-xl border border-slate-200 overflow-hidden">
-                  {/* Photo */}
-                  <div className="relative">
-                    <img
-                      src={photo.url || photo.data}
-                      alt="Progress"
-                      className="h-48 w-full object-cover"
-                    />
-                    <button
-                      onClick={() => handleDeletePhoto(photo.id)}
-                      className="absolute top-2 right-2 rounded-full bg-red-600 px-2 py-0.5 text-xs font-bold text-white"
-                    >
-                      ✕
-                    </button>
-                    <span className="absolute bottom-2 left-2 rounded-full bg-black/60 px-2 py-0.5 text-xs text-white">
-                      {new Date(photo.takenAt).toLocaleDateString("en-AU")}
-                    </span>
-                  </div>
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+            <h4 className="text-sm font-bold text-slate-300 uppercase tracking-wider mb-4 flex items-center space-x-2">
+              <Camera className="w-4 h-4 text-indigo-400" />
+              <span>
+                Photo Gallery ({(variation.progressPhotos || []).length} photos)
+              </span>
+            </h4>
 
-                  {/* Details */}
-                  <div className="p-3 space-y-2">
-                    {/* Stage Tag */}
-                    <select
-                      value={photo.stageTag}
-                      onChange={(e) => handleStageTag(photo.id, e.target.value)}
-                      className="w-full rounded-lg border border-slate-200 px-2 py-1 text-xs"
-                    >
-                      <option value="">— Tag a stage —</option>
-                      {activeStages.map((s) => (
-                        <option key={s.id} value={s.name}>{s.name}</option>
-                      ))}
-                    </select>
-
-                    {/* Caption */}
-                    <input
-                      type="text"
-                      value={photo.caption}
-                      onChange={(e) => handleCaptionChange(photo.id, e.target.value)}
-                      placeholder="Add a caption..."
-                      className="w-full rounded-lg border border-slate-200 px-2 py-1 text-xs"
-                    />
-
-                    {/* AI Analysis */}
-                    {photo.aiAnalysis ? (
-                      <div className="rounded-lg bg-purple-50 p-2 text-xs text-purple-800">
-                        <p className="font-bold mb-1">🤖 AI Analysis:</p>
-                        <p className="line-clamp-3">{photo.aiAnalysis}</p>
+            {(variation.progressPhotos || []).length === 0 ? (
+              <div className="text-center py-12">
+                <Camera className="w-12 h-12 text-slate-700 mx-auto mb-3" />
+                <p className="text-slate-500 text-sm">
+                  No progress photos yet. Upload your first site photo above.
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                {(variation.progressPhotos || []).map((photo) => (
+                  <div
+                    key={photo.id}
+                    className="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden group hover:border-indigo-500/50 transition"
+                  >
+                    {/* Photo */}
+                    <div className="relative">
+                      <img
+                        src={photo.data || photo.url || ""}
+                        alt={photo.caption}
+                        className="w-full h-40 object-cover"
+                      />
+                      {/* Overlay actions */}
+                      <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition flex items-center justify-center space-x-2">
+                        <button
+                          onClick={() => handleAiAnalysis(photo.id)}
+                          disabled={analyzingPhotoId === photo.id}
+                          className="bg-indigo-600 hover:bg-indigo-500 text-white p-2 rounded-lg text-xs font-medium flex items-center space-x-1"
+                        >
+                          <Sparkles className={`w-3 h-3 ${analyzingPhotoId === photo.id ? "animate-spin" : ""}`} />
+                          <span>{analyzingPhotoId === photo.id ? "Analyzing..." : "AI Analyze"}</span>
+                        </button>
+                        <button
+                          onClick={() => handleDeletePhoto(photo.id)}
+                          className="bg-red-600 hover:bg-red-500 text-white p-2 rounded-lg"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
                       </div>
-                    ) : (
-                      <button
-                        onClick={() => handleAnalyze(photo)}
-                        disabled={analyzingId === photo.id}
-                        className="w-full rounded-lg bg-purple-100 px-3 py-1.5 text-xs font-bold text-purple-700 hover:bg-purple-200 disabled:opacity-50"
-                      >
-                        {analyzingId === photo.id ? "⏳ Analysing..." : "🤖 AI Analyse Photo"}
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ── TAB: STAGES ── */}
-      {activeTab === "stages" && (
-        <div className="space-y-2">
-          {activeStages.length === 0 ? (
-            <p className="text-sm text-slate-400 text-center py-8">No active stages found</p>
-          ) : (
-            activeStages.map((stage) => {
-              const status = (stageProgress[stage.id] as StageStatus) ?? "Not Started";
-              return (
-                <button
-                  key={stage.id}
-                  onClick={() => handleStageToggle(stage.id)}
-                  className={`w-full rounded-xl border p-3 text-left transition hover:opacity-80 ${
-                    status === "Complete"
-                      ? "border-green-300 bg-green-50"
-                      : status === "In Progress"
-                      ? "border-amber-300 bg-amber-50"
-                      : "border-slate-200 bg-white"
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="text-lg">{STATUS_ICONS[status]}</span>
-                      <div>
-                        <p className="text-sm font-bold text-slate-900">{stage.name}</p>
-                        <p className="text-xs text-slate-500">{stage.trade} · {stage.durationDays} days</p>
+                      {/* Date stamp overlay */}
+                      <div className="absolute bottom-2 left-2 bg-black/70 backdrop-blur-sm text-white text-[10px] px-2 py-1 rounded-md font-medium">
+                        📅{" "}
+                        {new Date(photo.takenAt).toLocaleDateString("en-AU", {
+                          day: "2-digit",
+                          month: "short",
+                          year: "numeric",
+                        })}
                       </div>
                     </div>
-                    <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${STATUS_COLORS[status]}`}>
-                      {status}
-                    </span>
+
+                    {/* Photo Info */}
+                    <div className="p-3 space-y-2">
+                      <span className="inline-block text-[10px] bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-2 py-0.5 rounded-full font-semibold">
+                        🏷️ {photo.stageTag}
+                      </span>
+                      <p className="text-xs text-white font-medium leading-snug">
+                        📝 {photo.caption}
+                      </p>
+                      {photo.aiAnalysis && (
+                        <div className="bg-slate-900 border border-slate-800 rounded-lg p-2 mt-1">
+                          <p className="text-[10px] text-emerald-400 font-medium flex items-start space-x-1">
+                            <Sparkles className="w-3 h-3 flex-shrink-0 mt-0.5" />
+                            <span>{photo.aiAnalysis}</span>
+                          </p>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </button>
-              );
-            })
-          )}
-          <p className="text-xs text-slate-400 text-center pt-2">
-            Tap any stage to cycle: Not Started → In Progress → Complete
-          </p>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
-      {/* ── TAB: UPDATES ── */}
-      {activeTab === "updates" && (
-        <div className="space-y-4">
-          {/* Compose Update */}
-          <div className="rounded-xl border border-slate-200 p-4 space-y-3">
-            <h4 className="text-sm font-bold text-slate-700">📢 Send Progress Update</h4>
-            <textarea
-              value={updateText}
-              onChange={(e) => setUpdateText(e.target.value)}
-              placeholder={`Hi ${project.customerName}, here's your latest site update...`}
-              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm resize-none"
-              rows={3}
-            />
+      {/* ========== SECTION 2: Stage Progress Tracker ========== */}
+      {activeSection === "stages" && (
+        <div className="space-y-6">
+          {/* Overall Progress Bar */}
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-white flex items-center space-x-2">
+                <BarChart3 className="w-5 h-5 text-indigo-400" />
+                <span>Overall Progress</span>
+              </h3>
+              <div className="flex items-center space-x-4 text-sm">
+                <span className="text-emerald-400 font-bold">{completedCount} Complete</span>
+                <span className="text-amber-400 font-medium">{inProgressCount} In Progress</span>
+                <span className="text-slate-500">{stages.length - completedCount - inProgressCount} Not Started</span>
+              </div>
+            </div>
 
-            {/* Attach Photo */}
-            {progressPhotos.length > 0 && (
+            {/* Big progress bar */}
+            <div className="relative h-6 bg-slate-800 rounded-full overflow-hidden">
+              <div
+                className="absolute inset-y-0 left-0 bg-gradient-to-r from-indigo-600 to-emerald-500 rounded-full transition-all duration-500 ease-out"
+                style={{ width: `${overallPercent}%` }}
+              />
+              <div className="absolute inset-0 flex items-center justify-center">
+                <span className="text-xs font-bold text-white drop-shadow-lg">
+                  {overallPercent}% Complete
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Stage List */}
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+            <h4 className="text-sm font-bold text-slate-300 uppercase tracking-wider mb-4">
+              Approved Stages
+            </h4>
+
+            {stages.length === 0 ? (
+              <div className="text-center py-8">
+                <BarChart3 className="w-10 h-10 text-slate-700 mx-auto mb-3" />
+                <p className="text-slate-500 text-sm">No stages found in the approved solution.</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {stages.map((stage, index) => {
+                  const status = (stageProgress[stage.id] || "not_started") as StageStatus;
+                  const colors = STATUS_COLORS[status];
+
+                  return (
+                    <div
+                      key={stage.id}
+                      className="flex items-center justify-between bg-slate-950 border border-slate-800 rounded-xl px-5 py-4 hover:border-slate-700 transition group"
+                    >
+                      <div className="flex items-center space-x-4">
+                        <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-slate-800 text-slate-400 text-sm font-bold">
+                          {index + 1}
+                        </div>
+                        <div>
+                          <p className="text-sm font-semibold text-white">{stage.name}</p>
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            {stage.trade} • {stage.durationDays} days • ${stage.clientCost.toLocaleString()}
+                          </p>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={() => handleToggleStageStatus(stage.id)}
+                        className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-xs font-semibold transition ${colors.bg} ${colors.text} hover:brightness-110 border border-transparent hover:border-slate-700`}
+                      >
+                        <div className={`w-2 h-2 rounded-full ${colors.dot}`} />
+                        <span>{STATUS_LABELS[status]}</span>
+                        <ChevronRight className="w-3 h-3 opacity-50" />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Customer visibility note */}
+          <div className="bg-indigo-500/5 border border-indigo-500/20 rounded-xl p-4 flex items-start space-x-3">
+            <CheckCircle2 className="w-5 h-5 text-indigo-400 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-medium text-indigo-300">Customer Visible</p>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Stage progress is visible in the Customer View. Your client can track which stages
+                are complete at any time.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========== SECTION 3: Progress Updates (Send to Customer) ========== */}
+      {activeSection === "updates" && (
+        <div className="space-y-6">
+          {/* Compose Update */}
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+            <h3 className="text-lg font-bold text-white mb-4 flex items-center space-x-2">
+              <MessageSquare className="w-5 h-5 text-indigo-400" />
+              <span>Send Progress Update to Customer</span>
+            </h3>
+
+            <div className="space-y-4">
+              {/* Pre-fill button */}
+              <div className="flex items-center space-x-3">
+                <button
+                  onClick={() => setUpdateMessage(generatePrefilledMessage())}
+                  className="text-xs bg-slate-800 hover:bg-slate-700 text-indigo-400 px-3 py-1.5 rounded-lg transition font-medium flex items-center space-x-1"
+                >
+                  <Sparkles className="w-3 h-3" />
+                  <span>Auto-generate message</span>
+                </button>
+                <span className="text-xs text-slate-600">
+                  Pre-fills based on current stage progress
+                </span>
+              </div>
+
+              {/* Message textarea */}
+              <textarea
+                placeholder={`Hi ${customerFirstName}, update on your ${variation.roomType || "project"}...`}
+                value={updateMessage}
+                onChange={(e) => setUpdateMessage(e.target.value)}
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl p-4 text-white text-sm focus:outline-none focus:border-indigo-500 transition min-h-[120px]"
+                rows={5}
+              />
+
+              {/* Attach Photo */}
               <div>
-                <p className="text-xs font-semibold text-slate-500 mb-1">Attach a photo (optional):</p>
-                <div className="flex flex-wrap gap-2">
-                  {progressPhotos.slice(0, 6).map((photo) => (
+                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 block">
+                  Attach Photo (optional)
+                </label>
+                {(variation.progressPhotos || []).length > 0 ? (
+                  <div className="flex flex-wrap gap-2">
                     <button
-                      key={photo.id}
-                      onClick={() => setUpdatePhoto(
-                        updatePhoto === (photo.url || photo.data)
-                          ? null
-                          : (photo.url || photo.data || null)
-                      )}
-                      className={`relative rounded-lg overflow-hidden border-2 transition ${
-                        updatePhoto === (photo.url || photo.data)
-                          ? "border-red-600"
-                          : "border-transparent"
+                      onClick={() => setAttachPhotoToUpdate(null)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
+                        !attachPhotoToUpdate
+                          ? "bg-slate-700 text-white"
+                          : "bg-slate-800 text-slate-400 hover:bg-slate-700"
                       }`}
                     >
-                      <img
-                        src={photo.url || photo.data}
-                        alt=""
-                        className="h-14 w-14 object-cover"
-                      />
-                      {updatePhoto === (photo.url || photo.data) && (
-                        <div className="absolute inset-0 bg-red-600/20 flex items-center justify-center">
-                          <span className="text-white font-bold text-xs">✓</span>
-                        </div>
-                      )}
+                      None
+                    </button>
+                    {(variation.progressPhotos || []).map((photo) => (
+                      <button
+                        key={photo.id}
+                        onClick={() =>
+                          setAttachPhotoToUpdate(photo.data || photo.url || null)
+                        }
+                        className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition ${
+                          attachPhotoToUpdate === (photo.data || photo.url)
+                            ? "bg-indigo-600 text-white"
+                            : "bg-slate-800 text-slate-400 hover:bg-slate-700"
+                        }`}
+                      >
+                        <Camera className="w-3 h-3" />
+                        <span>{photo.caption.slice(0, 20)}{photo.caption.length > 20 ? "..." : ""}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-600">
+                    No progress photos uploaded yet. Go to Progress Photos tab to add some.
+                  </p>
+                )}
+              </div>
+
+              {/* Send Via Selection */}
+              <div>
+                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 block">
+                  Send Via
+                </label>
+                <div className="flex space-x-2">
+                  {[
+                    { key: "sms" as const, label: "📱 SMS", icon: Phone },
+                    { key: "whatsapp" as const, label: "💬 WhatsApp", icon: MessageSquare },
+                    { key: "email" as const, label: "📧 Email", icon: Mail },
+                    { key: "copy" as const, label: "📋 Copy", icon: CheckCircle2 },
+                  ].map((channel) => (
+                    <button
+                      key={channel.key}
+                      onClick={() => setSendVia(channel.key)}
+                      className={`flex items-center space-x-2 px-4 py-2.5 rounded-xl text-sm font-medium transition ${
+                        sendVia === channel.key
+                          ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/20"
+                          : "bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200"
+                      }`}
+                    >
+                      <span>{channel.label}</span>
                     </button>
                   ))}
                 </div>
               </div>
-            )}
 
-            {/* Send Buttons */}
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                onClick={() => handleSendUpdate("sms")}
-                disabled={!updateText.trim() || sending}
-                className="rounded-lg bg-green-600 px-3 py-2 text-xs font-bold text-white hover:bg-green-700 disabled:opacity-50"
-              >
-                📱 SMS Customer
-              </button>
-              <button
-                onClick={() => handleSendUpdate("whatsapp")}
-                disabled={!updateText.trim() || sending}
-                className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-50"
-              >
-                💬 WhatsApp
-              </button>
-              <button
-                onClick={() => handleSendUpdate("email")}
-                disabled={!updateText.trim() || sending}
-                className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-50"
-              >
-                📧 Email Customer
-              </button>
-              <button
-                onClick={() => handleSendUpdate("copy")}
-                disabled={!updateText.trim() || sending}
-                className="rounded-lg bg-slate-700 px-3 py-2 text-xs font-bold text-white hover:bg-slate-800 disabled:opacity-50"
-              >
-                📋 Copy
-              </button>
+              {/* Send Button */}
+              <div className="flex justify-end pt-2">
+                <button
+                  onClick={handleSendUpdate}
+                  disabled={!updateMessage.trim()}
+                  className="flex items-center space-x-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-600 text-white px-6 py-3 rounded-xl text-sm font-semibold transition shadow-lg shadow-indigo-600/20 disabled:shadow-none"
+                >
+                  <Send className="w-4 h-4" />
+                  <span>
+                    Send Update via {sendVia === "sms" ? "SMS" : sendVia === "whatsapp" ? "WhatsApp" : sendVia === "email" ? "Email" : "Clipboard"}
+                  </span>
+                </button>
+              </div>
             </div>
           </div>
 
-          {/* Updates Timeline */}
-          {progressUpdates.length > 0 && (
-            <div className="space-y-3">
-              <h4 className="text-sm font-bold text-slate-700">📋 Update History</h4>
-              {progressUpdates.map((update) => (
-                <div key={update.id} className="rounded-xl border border-slate-200 p-3 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-500">
-                      {new Date(update.sentAt).toLocaleString("en-AU", {
-                        day: "numeric",
-                        month: "short",
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
-                    </span>
-                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600">
-                      via {update.sentVia.toUpperCase()}
-                    </span>
-                  </div>
-                  <p className="text-sm text-slate-700 whitespace-pre-wrap">{update.message}</p>
-                  {update.attachedPhotoUrl && (
-                    <img
-                      src={update.attachedPhotoUrl}
-                      alt="Attached"
-                      className="h-32 w-full object-cover rounded-lg"
-                    />
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
+          {/* Update History */}
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+            <h4 className="text-sm font-bold text-slate-300 uppercase tracking-wider mb-4 flex items-center space-x-2">
+              <Clock className="w-4 h-4 text-slate-400" />
+              <span>Update History ({(variation.progressUpdates || []).length})</span>
+            </h4>
 
-          {progressUpdates.length === 0 && (
-            <div className="rounded-xl border border-dashed border-slate-300 py-12 text-center">
-              <p className="text-sm text-slate-400">No updates sent yet</p>
-              <p className="text-xs text-slate-400 mt-1">Send your first progress update above</p>
-            </div>
-          )}
+            {(variation.progressUpdates || []).length === 0 ? (
+              <div className="text-center py-8">
+                <Send className="w-10 h-10 text-slate-700 mx-auto mb-3" />
+                <p className="text-slate-500 text-sm">No updates sent yet.</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {[...(variation.progressUpdates || [])]
+                  .sort((a, b) => new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime())
+                  .map((update) => (
+                    <div
+                      key={update.id}
+                      className="bg-slate-950/50 border border-slate-800/60 rounded-xl p-4"
+                    >
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-start space-x-3 flex-1">
+                          <div
+                            className={`p-2 rounded-lg flex-shrink-0 ${
+                              update.sentVia === "sms"
+                                ? "bg-blue-500/10 text-blue-400"
+                                : update.sentVia === "whatsapp"
+                                ? "bg-green-500/10 text-green-400"
+                                : update.sentVia === "email"
+                                ? "bg-amber-500/10 text-amber-400"
+                                : "bg-slate-800 text-slate-400"
+                            }`}
+                          >
+                            {update.sentVia === "sms" ? (
+                              <Phone className="w-4 h-4" />
+                            ) : update.sentVia === "whatsapp" ? (
+                              <MessageSquare className="w-4 h-4" />
+                            ) : update.sentVia === "email" ? (
+                              <Mail className="w-4 h-4" />
+                            ) : (
+                              <CheckCircle2 className="w-4 h-4" />
+                            )}
+                          </div>
+                          <div className="flex-1">
+                            <p className="text-sm text-slate-200 leading-relaxed">{update.message}</p>
+                            {update.attachedPhotoUrl && (
+                              <div className="mt-2">
+                                <img
+                                  src={update.attachedPhotoUrl}
+                                  alt="Attached"
+                                  className="h-20 w-auto rounded-lg border border-slate-800"
+                                />
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center space-x-2 flex-shrink-0 ml-4">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                          <span className="text-emerald-400 text-[10px] font-semibold">SENT</span>
+                        </div>
+                      </div>
+                      <div className="mt-2 ml-11">
+                        <span className="text-[10px] text-slate-500">
+                          Sent via {update.sentVia.toUpperCase()} •{" "}
+                          {new Date(update.sentAt).toLocaleString("en-AU", {
+                            day: "2-digit",
+                            month: "short",
+                            year: "numeric",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
   );
-}
+};

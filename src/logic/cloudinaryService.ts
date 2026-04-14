@@ -9,7 +9,6 @@ export interface CloudinaryUploadResult {
   resourceType: "image" | "video";
 }
 
-// ── Upload image to Cloudinary ──
 export async function uploadImageToCloudinary(
   dataUrl: string,
   projectName: string,
@@ -37,7 +36,6 @@ export async function uploadImageToCloudinary(
   };
 }
 
-// ── Upload video to Cloudinary ──
 export async function uploadVideoToCloudinary(
   file: File,
   projectName: string
@@ -65,8 +63,6 @@ export async function uploadVideoToCloudinary(
   };
 }
 
-// ── Delete from Cloudinary (requires backend in production) ──
-// For now we log the publicId for manual cleanup
 export function scheduleCloudinaryDelete(publicIds: string[]): void {
   console.info(
     "Cloudinary cleanup needed for:",
@@ -75,7 +71,6 @@ export function scheduleCloudinaryDelete(publicIds: string[]): void {
   );
 }
 
-// ── Get all public IDs from a project's photos/videos ──
 export function extractPublicIds(
   photos: Array<{ publicId?: string }>,
   videos: Array<{ publicId?: string }>

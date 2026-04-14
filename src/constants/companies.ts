@@ -9,7 +9,7 @@ export const COMPANIES: Record<string, Company> = {
     abn: "89 644 915 702",
     phone: "0414 222 203",
     email: "james@thesegals.com.au",
-    logo: "/logos/segal-build.png",
+    logo: "https://raw.githubusercontent.com/hersvami/segal-build-app/main/public/logos/segal-build.png",
   },
   segval: {
     id: "segval",
@@ -19,6 +19,6 @@ export const COMPANIES: Record<string, Company> = {
     abn: "12 345 678 901",
     phone: "0414 222 203",
     email: "hello@segval.com.au",
-    logo: "/logos/segval.png",
+    logo: "https://raw.githubusercontent.com/hersvami/segal-build-app/main/public/logos/segval.png",
   },
 };

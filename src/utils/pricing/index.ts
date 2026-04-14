@@ -1,4 +1,4 @@
-export { generateSolutions } from "./engine";
+export { generateSolutions, generateSolutionsFromScope } from "./engine";
 export {
   OVERHEAD,
   MARGIN,
@@ -12,3 +12,13 @@ export { ROOM_STAGE_MAP } from "./templates";
 export type { StageTemplate } from "./templates/types";
 export { ANSWER_STAGE_RULES } from "./answerRules";
 export type { AnswerStageRule } from "./answerRules";
+export {
+  WORK_CATEGORIES,
+  recogniseScopeFromText,
+  recogniseScopeWithAI,
+} from "./scopeRecogniser";
+export type {
+  WorkCategory,
+  ScopeQuestion,
+  RecognisedScope,
+} from "./scopeRecogniser";

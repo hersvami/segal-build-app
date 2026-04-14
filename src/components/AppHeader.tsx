@@ -1,135 +1,95 @@
-import { useState } from "react";
-import type { Company } from "../types/domain";
-import { getGeminiApiKey, setGeminiApiKey, hasGeminiApiKey } from "../gemini";
+import { useState, useEffect } from "react";
+import { Key, Building, Check, ExternalLink } from "lucide-react";
+import { getGeminiApiKey, setGeminiApiKey } from "../gemini";
+import { COMPANIES } from "../constants/companies";
 
 interface AppHeaderProps {
-  company: Company;
-  companies: Record<string, Company>;
-  onSwitchCompany: (companyId: string) => void;
+  companyId: string;
+  onCompanyChange: (id: string) => void;
 }
 
-export function AppHeader({ company, companies, onSwitchCompany }: AppHeaderProps) {
-  const [showKeyInput, setShowKeyInput] = useState(false);
-  const [keyValue, setKeyValue] = useState(getGeminiApiKey());
-  const [saved, setSaved] = useState(false);
+export function AppHeader({ companyId, onCompanyChange }: AppHeaderProps) {
+  const [keyInput, setKeyInput] = useState("");
+  const [hasKey, setHasKey] = useState(false);
+
+  useEffect(() => {
+    const key = getGeminiApiKey();
+    if (key) {
+      setHasKey(true);
+      setKeyInput(key);
+    }
+  }, []);
 
   const handleSaveKey = () => {
-    if (keyValue.trim()) {
-      setGeminiApiKey(keyValue.trim());
-      setSaved(true);
-      setTimeout(() => {
-        setSaved(false);
-        setShowKeyInput(false);
-      }, 2000);
+    if (keyInput.trim()) {
+      setGeminiApiKey(keyInput.trim());
+      setHasKey(true);
     }
   };
 
-  const keyIsSet = hasGeminiApiKey() && getGeminiApiKey().length > 10 && getGeminiApiKey() !== "PASTE_YOUR_API_KEY_HERE";
+  const companiesList = Object.values(COMPANIES);
 
   return (
-    <header className={`${company.color} border-b border-black/20 text-white`}>
-      <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-4 py-4">
-        <div className="flex items-center gap-4">
-          <div className="h-14 w-14 rounded-lg bg-white/10 p-1 flex items-center justify-center font-black text-xl">
-            {company.name.charAt(0)}
-          </div>
-          <div>
-            <p className="text-xs uppercase tracking-[0.2em] text-white/70">Builders Variation App</p>
-            <h1 className="text-2xl font-black tracking-tight">{company.name}</h1>
-            <p className="text-sm text-white/80">{company.tagline}</p>
-          </div>
+    <header className="bg-slate-900 border-b border-slate-800 px-6 py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+      {/* Brand & Company Selector */}
+      <div className="flex items-center gap-4">
+        <div className="bg-blue-600 text-white p-2 rounded-lg">
+          <Building size={24} />
         </div>
-
-        <div className="flex items-center gap-3">
-          <div className="text-right">
-            <button
-              onClick={() => setShowKeyInput(!showKeyInput)}
-              className={`rounded-lg border px-3 py-1.5 text-xs font-bold ${
-                keyIsSet
-                  ? "border-green-300 bg-green-500/20 text-green-100 hover:bg-green-500/30"
-                  : "border-red-300 bg-red-500/20 text-red-100 hover:bg-red-500/30 animate-pulse"
-              }`}
-            >
-              {keyIsSet ? "🤖 AI Connected" : "⚠️ Set AI Key"}
-            </button>
-          </div>
-
-          <label className="space-y-1 text-right">
-            <span className="block text-[11px] font-semibold uppercase tracking-widest text-white/70">Company Profile</span>
+        <div>
+          <h1 className="text-xl font-bold text-white tracking-wide">
+            SEGAL BUILD <span className="text-xs text-blue-400 font-normal uppercase tracking-widest ml-2">Variation Hub</span>
+          </h1>
+          <div className="flex items-center gap-2 mt-1">
+            <span className="text-xs text-slate-400">Operating as:</span>
             <select
-              className="rounded-lg border border-white/40 bg-white/10 px-3 py-2 text-sm font-semibold outline-none"
-              value={company.id}
-              onChange={(event) => onSwitchCompany(event.target.value)}
+              value={companyId}
+              onChange={(e) => onCompanyChange(e.target.value)}
+              className="bg-slate-800 text-xs text-slate-200 border border-slate-700 rounded px-2 py-0.5 outline-none focus:border-blue-500"
             >
-              {Object.values(companies).map((option) => (
-                <option key={option.id} value={option.id} className="text-slate-900">
-                  {option.name}
+              {companiesList.map((company) => (
+                <option key={company.id} value={company.id}>
+                  {company.name}
                 </option>
               ))}
             </select>
-          </label>
+          </div>
         </div>
       </div>
 
-      {showKeyInput && (
-        <div className="border-t border-white/20 bg-black/20">
-          <div className="mx-auto max-w-7xl px-4 py-4">
-            <div className="rounded-xl bg-white/10 p-4 space-y-3">
-              <div>
-                <h3 className="text-sm font-bold text-white">🤖 Gemini AI API Key</h3>
-                <p className="text-xs text-white/70 mt-1">
-                  Required for AI scope enhancement, photo analysis, and quote generation.
-                  Get your free key from{" "}
-                  <a
-                    href="https://aistudio.google.com/apikey"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="underline text-white/90 hover:text-white"
-                  >
-                    Google AI Studio
-                  </a>
-                </p>
-              </div>
-
-              <div className="flex gap-2">
-                <input
-                  type="password"
-                  value={keyValue}
-                  onChange={(e) => setKeyValue(e.target.value)}
-                  placeholder="Paste your Gemini API key here (starts with AIza...)"
-                  className="flex-1 rounded-lg border border-white/30 bg-white/10 px-3 py-2 text-sm text-white placeholder-white/40 outline-none focus:border-white/60"
-                />
-                <button
-                  onClick={handleSaveKey}
-                  disabled={!keyValue.trim() || saved}
-                  className="rounded-lg bg-green-600 px-4 py-2 text-sm font-bold text-white hover:bg-green-700 disabled:opacity-50"
-                >
-                  {saved ? "✅ Saved!" : "Save Key"}
-                </button>
-              </div>
-
-              {keyIsSet && (
-                <div className="flex items-center gap-2">
-                  <span className="rounded-full bg-green-500/20 px-3 py-1 text-xs font-bold text-green-200">
-                    ✓ Key is set
-                  </span>
-                  <span className="text-xs text-white/50">
-                    Key: {getGeminiApiKey().substring(0, 8)}...{getGeminiApiKey().slice(-4)}
-                  </span>
-                </div>
-              )}
-
-              <div className="text-xs text-white/50 space-y-1">
-                <p><strong>How to get your key:</strong></p>
-                <p>1. Go to <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" className="underline">aistudio.google.com/apikey</a></p>
-                <p>2. Sign in with your Google account</p>
-                <p>3. Click "Create API Key"</p>
-                <p>4. Copy the key and paste it above</p>
-              </div>
-            </div>
-          </div>
+      {/* Gemini API Key Entry */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 bg-slate-800/60 border border-slate-700/50 p-2.5 rounded-xl">
+        <div className="flex items-center gap-2">
+          <Key size={16} className={hasKey ? "text-emerald-400" : "text-amber-400 animate-pulse"} />
+          <span className="text-xs font-medium text-slate-300">
+            Gemini AI API Key:
+          </span>
         </div>
-      )}
+        <div className="flex flex-1 sm:flex-initial items-center gap-2">
+          <input
+            type="password"
+            placeholder="AIzaSy..."
+            value={keyInput}
+            onChange={(e) => setKeyInput(e.target.value)}
+            className="flex-1 sm:w-48 bg-slate-950/50 text-white border border-slate-700 rounded-lg px-3 py-1 text-xs focus:outline-none focus:border-blue-500 font-mono"
+          />
+          <button
+            onClick={handleSaveKey}
+            className="flex items-center gap-1 bg-blue-600 hover:bg-blue-500 transition text-white px-3 py-1 rounded-lg text-xs font-semibold shadow-sm"
+          >
+            {hasKey && <Check size={12} />}
+            {hasKey ? "Saved" : "Save"}
+          </button>
+        </div>
+        <a
+          href="https://aistudio.google.com/apikey"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-1 text-[10px] text-blue-400 hover:underline mt-1 sm:mt-0"
+        >
+          Get Free Key <ExternalLink size={10} />
+        </a>
+      </div>
     </header>
   );
 }

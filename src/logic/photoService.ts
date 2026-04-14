@@ -1,10 +1,8 @@
 import { uploadImageToCloudinary } from "./cloudinaryService";
 
-// ── Compress image to data URL ──
 export async function compressImageToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-
     reader.onerror = () => reject(new Error("Failed to read image file"));
     reader.onload = (ev) => {
       const img = new Image();
@@ -34,12 +32,10 @@ export async function compressImageToDataUrl(file: File): Promise<string> {
       };
       img.src = ev.target?.result as string;
     };
-
     reader.readAsDataURL(file);
   });
 }
 
-// ── Upload photo to Cloudinary ──
 export async function uploadPhotoToCloudinary(
   dataUrl: string,
   projectName: string,
@@ -49,13 +45,10 @@ export async function uploadPhotoToCloudinary(
   return { url: result.url, publicId: result.publicId };
 }
 
-// ── Legacy Firebase upload (kept for reference — NOT USED) ──
 export async function uploadPhotoToFirebase(
   _dataUrl: string,
   _projectId: string,
   _variationId: string
-): Promise<string> {
-  throw new Error(
-    "Firebase Storage not active — use uploadPhotoToCloudinary instead"
-  );
+): Promise<{ url: string }> {
+  throw new Error("Firebase Storage not active — use uploadPhotoToCloudinary instead");
 }

@@ -1,4 +1,4 @@
-import type { StageTemplate } from "./types";
+import type { StageTemplate } from "../types";
 
 export const roofingStages: StageTemplate[] = [
   { name: "Site setup and scaffolding", description: "Scaffolding erect, safety setup", trade: "Scaffolding", unitRate: 1500, unitType: "allow", durationDays: 1, code: "AS/NZS 1576", order: 10, isFixed: true },

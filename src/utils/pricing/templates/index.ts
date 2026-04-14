@@ -1,4 +1,4 @@
-import type { StageTemplate } from "./types";
+import type { StageTemplate } from "../types";
 import { bathroomStages } from "./bathroom";
 import { kitchenStages } from "./kitchen";
 import { laundryStages } from "./laundry";

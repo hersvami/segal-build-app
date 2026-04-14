@@ -92,7 +92,7 @@ export interface Variation {
   changeLog?: ChangeLogEntry[];
   progressPhotos?: ProgressPhoto[];
   progressUpdates?: ProgressUpdate[];
-  stageProgress?: Record<string, "Not Started" | "In Progress" | "Complete">;
+  stageProgress?: Record<string, string>;
 }
 
 export interface ChangeLogEntry {
@@ -108,6 +108,7 @@ export interface ProgressPhoto {
   id: string;
   url?: string;
   data?: string;
+  publicId?: string;
   caption: string;
   stageTag: string;
   aiAnalysis: string;

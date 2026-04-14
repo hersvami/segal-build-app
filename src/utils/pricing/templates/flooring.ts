@@ -1,4 +1,4 @@
-import type { StageTemplate } from "./types";
+import type { StageTemplate } from "../types";
 
 export const flooringStages: StageTemplate[] = [
   { name: "Site setup and protection", description: "Floor protection to non-work areas, dust barriers", trade: "Site Prep", unitRate: 350, unitType: "allow", durationDays: 1, code: "NCC 2022", order: 10, isFixed: true },

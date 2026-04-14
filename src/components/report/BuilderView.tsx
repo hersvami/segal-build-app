@@ -1,328 +1,162 @@
-import { useMemo } from "react";
-import type { Variation, Solution, Company, Project, JobStage } from "../../types/domain";
-import { isVariationLocked } from "../../utils/variationGuards";
-import { DocumentEditor } from "./builder-modules/DocumentEditor";
-import { QuoteOptions } from "./builder-modules/QuoteOptions";
-import { PricingHeader } from "./builder-modules/PricingHeader";
-import { TradeToggles } from "./builder-modules/TradeToggles";
-import { StageManager } from "./builder-modules/StageManager";
-
-const recalcSolution = (solution: Solution): Solution => {
-  const activeStages = solution.stages.filter((s) => s.isSelected);
-  const builderCost = activeStages.reduce((sum, s) => sum + s.builderCost, 0);
-  const clientCost = activeStages.reduce((sum, s) => sum + s.clientCost, 0);
-  const timelineDays = activeStages.reduce((sum, s) => sum + s.durationDays, 0);
-
-  const byTrade = new Map<string, { builder: number; client: number }>();
-  for (const stage of activeStages) {
-    const current = byTrade.get(stage.trade) ?? { builder: 0, client: 0 };
-    byTrade.set(stage.trade, {
-      builder: current.builder + stage.builderCost,
-      client: current.client + stage.clientCost,
-    });
-  }
-
-  const tradeLines = Array.from(byTrade.entries()).map(([trade, costs], idx) => ({
-    id: `${trade}-${idx}`,
-    trade,
-    description: `${trade} works`,
-    builderCost: costs.builder,
-    clientCost: costs.client,
-  }));
-
-  return { ...solution, stages: solution.stages, tradeLines, builderCost, clientCost, timelineDays };
-};
+import React, { useState } from "react";
+import { Variation } from "../../types/domain";
+import { Save, PlusCircle } from "lucide-react";
 
 interface BuilderViewProps {
   variation: Variation;
-  project: Project;
-  company: Company;
   onUpdateVariation: (updated: Variation) => void;
-  onStatusChange: (status: Variation["status"], comment?: string) => void;
-  onCreateRevision?: () => void;
-  onSend: () => void;
-  setViewMode: (mode: "builder" | "customer") => void;
 }
 
-export function BuilderView({
-  variation,
-  project,
-  // @ts-ignore
-  company,
-  onUpdateVariation,
-  onStatusChange,
-  onCreateRevision,
-  onSend,
-  setViewMode,
-}: BuilderViewProps) {
-  const isLocked = isVariationLocked(variation);
-  const selectedSolution = variation.solutions[variation.selectedSolution];
+export const BuilderView: React.FC<BuilderViewProps> = ({ variation, onUpdateVariation }) => {
+  const [description, setDescription] = useState(variation.description || "");
+  const [elaboratedDescription, setElaboratedDescription] = useState(variation.elaboratedDescription || "");
+  const [newLogText, setNewLogText] = useState("");
 
-  const allTrades = useMemo(() => {
-    const fromRates = ["General", "Carpentry", "Plumbing", "Electrical", "Painting", "Tiling", "Roofing", "Concreting"];
-    const fromStages = selectedSolution.stages.map((s) => s.trade);
-    return Array.from(new Set([...fromRates, ...fromStages])).sort();
-  }, [selectedSolution.stages]);
+  const selectedSolution = variation.solutions[variation.selectedSolution] || variation.solutions[0];
 
-  const handleSolutionUpdate = (updatedSolution: Solution) => {
-    if (isLocked) return;
-    const recalced = recalcSolution(updatedSolution);
-    const nextSolutions = variation.solutions.map((s, i) =>
-      i === variation.selectedSolution ? recalced : s
-    );
-    onUpdateVariation({ ...variation, solutions: nextSolutions });
+  const handleSaveScope = () => {
+    onUpdateVariation({
+      ...variation,
+      description,
+      elaboratedDescription
+    });
   };
 
-  const handleStagesChange = (newStages: JobStage[]) => {
-    handleSolutionUpdate({ ...selectedSolution, stages: newStages });
-  };
+  const handleAddLog = () => {
+    if (!newLogText.trim()) return;
 
-  const handleToggleTrade = (trade: string) => {
-    if (isLocked) return;
-    const tradeStages = selectedSolution.stages.filter((s) => s.trade === trade);
-    const shouldEnable = tradeStages.some((s) => !s.isSelected);
-    const nextStages = selectedSolution.stages.map((s) =>
-      s.trade === trade ? { ...s, isSelected: shouldEnable } : s
-    );
-    handleStagesChange(nextStages);
-  };
-
-  const handleSelectOption = (idx: number) => {
-    if (isLocked) return;
-    onUpdateVariation({ ...variation, selectedSolution: idx });
-  };
-
-  const handleAddOption = () => {
-    if (isLocked) return;
-    const newSol: Solution = {
-      id: Date.now().toString(36) + Math.random().toString(36).substring(2, 8),
-      title: `Option ${variation.solutions.length + 1}`,
-      description: "",
-      builderCost: 0,
-      clientCost: 0,
-      timelineDays: 0,
-      stages: [],
-      tradeLines: [],
+    const newLog = {
+      id: crypto.randomUUID(),
+      timestamp: new Date().toISOString(),
+      actor: "builder" as const,
+      actorName: "Builder Admin",
+      action: newLogText,
+      detail: "Manual internal builder note/log"
     };
+
     onUpdateVariation({
       ...variation,
-      solutions: [...variation.solutions, newSol],
-      selectedSolution: variation.solutions.length,
+      changeLog: [...(variation.changeLog || []), newLog]
     });
+    setNewLogText("");
   };
-
-  const handleDeleteOption = (idx: number) => {
-    if (isLocked) return;
-    if (variation.solutions.length <= 1) return;
-    const nextSolutions = variation.solutions.filter((_, i) => i !== idx);
-    onUpdateVariation({
-      ...variation,
-      solutions: nextSolutions,
-      selectedSolution: Math.min(variation.selectedSolution, nextSolutions.length - 1),
-    });
-  };
-
-  const handleRenameOption = (idx: number, newTitle: string) => {
-    if (isLocked) return;
-    const nextSolutions = variation.solutions.map((s, i) =>
-      i === idx ? { ...s, title: newTitle } : s
-    );
-    onUpdateVariation({ ...variation, solutions: nextSolutions });
-  };
-
-  const handlePrintPDF = () => {
-    setViewMode("customer");
-    setTimeout(() => window.print(), 500);
-  };
-
-  const selectedStageNames = selectedSolution.stages
-    .filter((s) => s.isSelected)
-    .map((s) => s.name);
 
   return (
-    <article className="space-y-6 rounded-2xl border border-slate-200 bg-white p-6 print:hidden">
-      <div className="flex justify-between items-center">
-        <div className="flex gap-2">
-          <button
-            onClick={() => setViewMode("builder")}
-            className="rounded-lg px-3 py-1 text-xs font-bold bg-slate-800 text-white"
-          >
-            🔧 Builder View
-          </button>
-          <button
-            onClick={() => setViewMode("customer")}
-            className="rounded-lg px-3 py-1 text-xs font-bold bg-blue-100 text-blue-700"
-          >
-            👤 Customer Preview
-          </button>
+    <div className="grid grid-cols-3 gap-8">
+      {/* Scope Editor */}
+      <div className="col-span-2 space-y-6">
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+          <h3 className="text-lg font-bold text-white mb-4">Edit Scope & Disclaimers</h3>
+          
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs font-semibold text-slate-400 uppercase mb-2">
+                Primary Description / Scope of Works
+              </label>
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                rows={4}
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl p-4 text-white text-sm focus:border-indigo-500 focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-400 uppercase mb-2">
+                Elaborated Details / Additional Disclaimers
+              </label>
+              <textarea
+                value={elaboratedDescription}
+                onChange={(e) => setElaboratedDescription(e.target.value)}
+                rows={4}
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl p-4 text-white text-sm focus:border-indigo-500 focus:outline-none"
+              />
+            </div>
+
+            <div className="flex justify-end">
+              <button
+                onClick={handleSaveScope}
+                className="flex items-center space-x-2 bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl text-sm font-semibold transition"
+              >
+                <Save className="w-4 h-4" />
+                <span>Save Scope Changes</span>
+              </button>
+            </div>
+          </div>
         </div>
-        <div className="flex gap-2">
-          <button
-            onClick={handlePrintPDF}
-            className="rounded-lg bg-blue-100 px-4 py-2 text-xs font-bold text-blue-800 hover:bg-blue-200"
-          >
-            📄 Save PDF
-          </button>
-          <button
-            onClick={onSend}
-            className="rounded-lg bg-green-600 px-4 py-2 text-xs font-bold text-white hover:bg-green-700"
-          >
-            📧 Send to Customer
-          </button>
+
+        {/* Pricing / Stages Overview */}
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+          <h3 className="text-lg font-bold text-white mb-4">Trade Breakdown & Internal Pricing</h3>
+          {selectedSolution && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-slate-800 text-slate-400 text-xs uppercase font-semibold">
+                    <th className="py-3 px-4">Stage / Task</th>
+                    <th className="py-3 px-4 text-right">Builder Cost</th>
+                    <th className="py-3 px-4 text-right">Client Charge</th>
+                    <th className="py-3 px-4 text-right">Gross Margin</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60">
+                  {selectedSolution.stages.map(stage => {
+                    const margin = stage.clientCost - stage.builderCost;
+                    return (
+                      <tr key={stage.id} className="text-sm">
+                        <td className="py-4 px-4 font-medium text-white">{stage.name}</td>
+                        <td className="py-4 px-4 text-slate-400 text-right">${stage.builderCost.toLocaleString()}</td>
+                        <td className="py-4 px-4 text-emerald-400 font-semibold text-right">${stage.clientCost.toLocaleString()}</td>
+                        <td className="py-4 px-4 text-amber-500 font-semibold text-right">${margin.toLocaleString()}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </div>
 
-      {isLocked && (
-        <div className="rounded-xl border-2 border-green-400 bg-green-50 p-4 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="text-sm font-black text-green-800">🔒 This document is locked</p>
-            <p className="text-xs text-green-700 mt-0.5">
-              Approved on {variation.approvedAt ? new Date(variation.approvedAt).toLocaleDateString("en-AU") : "—"}.
-            </p>
-          </div>
-          {onCreateRevision && (
-            <button
-              onClick={onCreateRevision}
-              className="rounded-lg bg-green-700 px-4 py-2 text-xs font-bold text-white hover:bg-green-800"
-            >
-              📄 Create Revision
-            </button>
-          )}
-        </div>
-      )}
-
-      <header className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 pb-4">
-        <div>
-          <p className="text-xs font-bold uppercase tracking-widest text-red-700">
-            {variation.mode === "quote" ? "Quotation" : "Variation"}
-          </p>
-          <h3 className="text-2xl font-black tracking-tight text-slate-900">{variation.title}</h3>
-          <p className="text-sm text-slate-500">
-            {project.name} · {project.customerName}
-          </p>
-        </div>
-        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold uppercase text-slate-700">
-          {variation.status}
-        </span>
-      </header>
-
-      <DocumentEditor
-        variation={variation}
-        projectName={project.name}
-        customerName={project.customerName}
-        selectedStageNames={selectedStageNames}
-        onSave={(text) => onUpdateVariation({ ...variation, elaboratedDescription: text, description: text })}
-        isLocked={isLocked}
-      />
-
-      <QuoteOptions
-        solutions={variation.solutions}
-        selectedIndex={variation.selectedSolution}
-        onSelect={handleSelectOption}
-        onAdd={handleAddOption}
-        onDelete={handleDeleteOption}
-        onRename={handleRenameOption}
-        isLocked={isLocked}
-      />
-
-      <PricingHeader
-        builderCost={selectedSolution.builderCost}
-        clientCost={selectedSolution.clientCost}
-      />
-
-      <TradeToggles
-        stages={selectedSolution.stages}
-        onToggleTrade={handleToggleTrade}
-        isLocked={isLocked}
-      />
-
-      <StageManager
-        stages={selectedSolution.stages}
-        onStagesChange={handleStagesChange}
-        allTrades={allTrades}
-        dimensions={variation.dimensions}
-        isLocked={isLocked}
-      />
-
-      <section className="space-y-2 rounded-xl border border-slate-200 p-4">
-        <h4 className="text-sm font-bold uppercase tracking-wider text-slate-600">Status & Actions</h4>
-        {isLocked ? (
-          <p className="text-xs text-green-700 font-semibold">
-            🔒 Document is locked. Use "Create Revision" above to make changes.
-          </p>
-        ) : (
-          <div className="flex flex-wrap gap-2">
-            <button
-              onClick={() => onStatusChange("pending")}
-              className="rounded-lg bg-slate-800 px-4 py-2 text-xs font-bold text-white"
-            >
-              Mark Pending
-            </button>
-            <button
-              onClick={() => onStatusChange("approved")}
-              className="rounded-lg bg-green-700 px-4 py-2 text-xs font-bold text-white"
-            >
-              Approve
-            </button>
-            <button
-              onClick={() => onStatusChange("rejected")}
-              className="rounded-lg bg-red-700 px-4 py-2 text-xs font-bold text-white"
-            >
-              Reject
-            </button>
-            <button
-              onClick={() => onStatusChange("invoiced")}
-              className="rounded-lg bg-purple-700 px-4 py-2 text-xs font-bold text-white"
-            >
-              Mark Invoiced
-            </button>
-          </div>
-        )}
-      </section>
-
-      {/* ── Change Log ── */}
-      {(variation.changeLog ?? []).length > 0 && (
-        <section className="space-y-3 rounded-xl border border-slate-200 p-4">
-          <h4 className="text-sm font-bold uppercase tracking-wider text-slate-600">
-            📋 Change Log & Audit Trail
-          </h4>
-          <div className="space-y-2 max-h-64 overflow-y-auto">
-            {(variation.changeLog ?? []).map((entry) => (
-              <div
-                key={entry.id}
-                className={`rounded-lg border px-3 py-2 text-xs ${
-                  entry.actor === "customer"
-                    ? "border-blue-200 bg-blue-50"
-                    : "border-slate-200 bg-slate-50"
-                }`}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <span className={`rounded-full px-2 py-0.5 font-bold ${
-                      entry.actor === "customer"
-                        ? "bg-blue-200 text-blue-800"
-                        : "bg-slate-200 text-slate-700"
-                    }`}>
-                      {entry.actor === "customer" ? "👤" : "🔧"} {entry.actorName}
-                    </span>
-                    <span className="font-semibold text-slate-800">{entry.action}</span>
-                  </div>
-                  <span className="text-slate-400">
-                    {new Date(entry.timestamp).toLocaleString("en-AU", {
-                      day: "numeric", month: "short",
-                      hour: "2-digit", minute: "2-digit"
-                    })}
-                  </span>
+      {/* Internal Log and Auditing */}
+      <div className="space-y-6">
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 flex flex-col h-[500px]">
+          <h3 className="text-lg font-bold text-white mb-4">Internal Action & Activity Logs</h3>
+          
+          <div className="flex-1 overflow-y-auto space-y-4 pr-2">
+            {(variation.changeLog || []).map(log => (
+              <div key={log.id} className="border-l-2 border-indigo-500 pl-4 py-1">
+                <div className="flex justify-between items-baseline">
+                  <span className="text-xs font-semibold text-indigo-400">{log.actorName}</span>
+                  <span className="text-[10px] text-slate-500">{new Date(log.timestamp).toLocaleDateString()}</span>
                 </div>
-                {entry.detail && (
-                  <p className="mt-1 text-slate-600 pl-2">{entry.detail}</p>
-                )}
+                <p className="text-sm text-slate-200 mt-1">{log.action}</p>
+                {log.detail && <p className="text-xs text-slate-400 mt-0.5">{log.detail}</p>}
               </div>
             ))}
+            {(!variation.changeLog || variation.changeLog.length === 0) && (
+              <p className="text-slate-500 text-sm italic">No internal logs recorded yet.</p>
+            )}
           </div>
-        </section>
-      )}
 
-    </article>
+          <div className="border-t border-slate-800 pt-4 mt-4 space-y-3">
+            <input
+              type="text"
+              placeholder="Add an internal log/note..."
+              value={newLogText}
+              onChange={(e) => setNewLogText(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"
+            />
+            <button
+              onClick={handleAddLog}
+              className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-2 rounded-xl text-sm transition flex items-center justify-center space-x-2"
+            >
+              <PlusCircle className="w-4 h-4" />
+              <span>Add Note</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
-}
+};

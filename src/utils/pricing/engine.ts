@@ -1,310 +1,68 @@
-import type { JobStage, Solution, TradeLine } from "../../types/domain";
-import { generateId } from "../id";
-import { toClient, FIXED_COST_TRADES } from "./constants";
-import { ROOM_STAGE_MAP } from "./templates";
-import type { StageTemplate } from "./templates/types";
-import { ANSWER_STAGE_RULES } from "./answerRules";
-import type { RecognisedScope, ScopeQuestion } from "./scopeRecogniser";
+import type { JobStage, Solution } from '../../types/domain';
+import { generateId } from '../id';
+import { toClient, FIXED_COST_TRADES } from './constants';
+import type { StageTemplate } from './categories/types';
+import type { RecognisedScope } from './scopeRecogniser';
 
-interface Dimensions {
-  length: number;
-  width: number;
-  height: number;
-}
-
-// ─── Answer-based extra stages (legacy room mode) ───────────────────────────
-
-function getAnswerStages(
-  answers: Record<string, string>,
-  dims: Dimensions,
-  multiplier: number
-): { extraStages: (JobStage & { _order: number })[]; costMultiplier: number } {
-  const area = Math.max(dims.length * dims.width, 1);
-  const extraStages: (JobStage & { _order: number })[] = [];
-  let totalMultiplier = 1;
-
-  for (const rule of ANSWER_STAGE_RULES) {
-    const userAnswer = answers[rule.questionId];
-    if (!userAnswer) continue;
-
-    const matches = Array.isArray(rule.answerMatch)
-      ? rule.answerMatch.includes(userAnswer)
-      : userAnswer === rule.answerMatch;
-
-    if (!matches) continue;
-
-    if (rule.costMultiplier) {
-      totalMultiplier *= rule.costMultiplier;
-    }
-
-    for (const template of rule.stages) {
-      const isFixed = template.isFixed || FIXED_COST_TRADES.has(template.trade);
-      const effectiveMultiplier = isFixed ? 1 : multiplier;
-      const rawBuilder =
-        template.unitType === "area"
-          ? area * template.unitRate * effectiveMultiplier
-          : template.unitRate * effectiveMultiplier;
-      const builderCost = Math.round(rawBuilder);
-
-      extraStages.push({
-        id: generateId(),
-        name: template.name,
-        description: template.description,
-        durationDays: template.durationDays,
-        builderCost,
-        clientCost: toClient(builderCost),
-        trade: template.trade,
-        code: template.code,
-        isSelected: true,
-        _order: template.order,
-      });
-    }
-  }
-
-  return { extraStages, costMultiplier: totalMultiplier };
-}
-
-// ─── Scope-based answer processing (new AI mode) ────────────────────────────
-
-function getScopeAnswerEffects(
-  answers: Record<string, string>,
-  questions: ScopeQuestion[],
-  dims: Dimensions,
-  multiplier: number
-): { extraStages: (JobStage & { _order: number })[]; costMultiplier: number } {
-  const area = Math.max(dims.length * dims.width, 1);
-  const extraStages: (JobStage & { _order: number })[] = [];
-  let totalMultiplier = 1;
-
-  for (const question of questions) {
-    const userAnswer = answers[question.id];
-    if (!userAnswer || !question.costEffect) continue;
-
-    for (const effect of question.costEffect) {
-      const matchAnswers = Array.isArray(effect.matchAnswer)
-        ? effect.matchAnswer
-        : [effect.matchAnswer];
-
-      if (!matchAnswers.includes(userAnswer)) continue;
-
-      if (effect.type === "multiplier" && effect.value) {
-        totalMultiplier *= effect.value;
-      }
-
-      if (effect.type === "add_stage" && effect.stage) {
-        const template = effect.stage;
-        const isFixed = template.isFixed || FIXED_COST_TRADES.has(template.trade);
-        const effectiveMultiplier = isFixed ? 1 : multiplier;
-        const rawBuilder =
-          template.unitType === "area"
-            ? area * template.unitRate * effectiveMultiplier
-            : template.unitRate * effectiveMultiplier;
-        const builderCost = Math.round(rawBuilder);
-
-        extraStages.push({
-          id: generateId(),
-          name: template.name,
-          description: template.description,
-          durationDays: template.durationDays,
-          builderCost,
-          clientCost: toClient(builderCost),
-          trade: template.trade,
-          code: template.code,
-          isSelected: true,
-          _order: template.order,
-        });
-      }
-    }
-  }
-
-  return { extraStages, costMultiplier: totalMultiplier };
-}
-
-// ─── Build stages from scope (new AI mode) ──────────────────────────────────
-
-function buildStagesFromScope(
-  scope: RecognisedScope,
-  dims: Dimensions,
-  multiplier: number,
-  answers: Record<string, string>
-): JobStage[] {
-  const area = Math.max(dims.length * dims.width, 1);
-
-  const { extraStages, costMultiplier } = getScopeAnswerEffects(
-    answers,
-    scope.questions,
-    dims,
-    multiplier
-  );
-
-  const finalMultiplier = multiplier * costMultiplier;
-
-  const baseStages = scope.stages.map((template: StageTemplate) => {
-    const isFixed = template.isFixed || FIXED_COST_TRADES.has(template.trade);
-    const rawBuilder =
-      template.unitType === "area"
-        ? area * template.unitRate * (isFixed ? 1 : finalMultiplier)
-        : template.unitRate * (isFixed ? 1 : finalMultiplier);
-    const builderCost = Math.round(rawBuilder);
-
-    return {
-      id: generateId(),
-      name: template.name,
-      description: template.description,
-      durationDays: template.durationDays,
-      builderCost,
-      clientCost: toClient(builderCost),
-      trade: template.trade,
-      code: template.code,
-      isSelected: true,
-      _order: template.order,
-    };
-  });
-
-  const allStages = [...baseStages, ...extraStages];
-  allStages.sort((a, b) => a._order - b._order);
-
-  return allStages.map(({ _order, ...stage }) => stage);
-}
-
-// ─── Build stages from room type (legacy mode) ─────────────────────────────
-
-function buildStages(
-  roomType: string,
-  dims: Dimensions,
-  multiplier: number,
-  answers?: Record<string, string>
-): JobStage[] {
-  const area = Math.max(dims.length * dims.width, 1);
-  const roomStages = ROOM_STAGE_MAP[roomType] ?? ROOM_STAGE_MAP.general;
-  const { extraStages, costMultiplier } = answers
-    ? getAnswerStages(answers, dims, multiplier)
-    : { extraStages: [] as (JobStage & { _order: number })[], costMultiplier: 1 };
-
-  const finalMultiplier = multiplier * costMultiplier;
-
-  const baseStages = roomStages.map((template: StageTemplate) => {
-    const isFixed = template.isFixed || FIXED_COST_TRADES.has(template.trade);
-    const rawBuilder =
-      template.unitType === "area"
-        ? area * template.unitRate * (isFixed ? 1 : finalMultiplier)
-        : template.unitRate * (isFixed ? 1 : finalMultiplier);
-    const builderCost = Math.round(rawBuilder);
-
-    return {
-      id: generateId(),
-      name: template.name,
-      description: template.description,
-      durationDays: template.durationDays,
-      builderCost,
-      clientCost: toClient(builderCost),
-      trade: template.trade,
-      code: template.code,
-      isSelected: true,
-      _order: template.order,
-    };
-  });
-
-  const allStages = [...baseStages, ...extraStages];
-  allStages.sort((a, b) => a._order - b._order);
-
-  return allStages.map(({ _order, ...stage }) => stage);
-}
-
-// ─── Trade lines aggregation ────────────────────────────────────────────────
-
-function buildTradeLines(stages: JobStage[]): TradeLine[] {
-  const totals = new Map<string, number>();
-  for (const stage of stages) {
-    if (!stage.isSelected) continue;
-    totals.set(stage.trade, (totals.get(stage.trade) ?? 0) + stage.builderCost);
-  }
-
-  return Array.from(totals.entries()).map(([trade, builderCost]) => ({
-    id: generateId(),
-    trade,
-    description: `${trade} works`,
-    builderCost,
-    clientCost: toClient(builderCost),
-  }));
-}
-
-// ─── Build a single solution ────────────────────────────────────────────────
-
-function buildSolution(
-  roomType: string,
-  dims: Dimensions,
-  title: string,
-  multiplier: number,
-  answers?: Record<string, string>
-): Solution {
-  const stages = buildStages(roomType, dims, multiplier, answers);
-  const tradeLines = buildTradeLines(stages);
-  const builderCost = stages.reduce((sum, item) => sum + item.builderCost, 0);
-  const clientCost = stages.reduce((sum, item) => sum + item.clientCost, 0);
-  const timelineDays = stages.reduce((sum, item) => sum + item.durationDays, 0);
-
+// Convert a StageTemplate to a JobStage with cost calculation
+function templateToStage(t: StageTemplate, area: number, tier: number): JobStage {
+  const qty = t.unitType === 'allow' ? 1 : t.unitType === 'item' ? (t.defaultQty || 1) : area;
+  const cost = Math.round(t.unitRate * qty * tier);
   return {
     id: generateId(),
-    title,
-    description: `${title} scope for ${roomType}`,
-    builderCost,
-    clientCost,
-    timelineDays,
-    stages,
-    tradeLines,
+    name: t.name,
+    trade: t.trade,
+    cost,
+    duration: t.duration,
+    description: t.description || t.name,
+    status: 'not-started' as const,
+    quantity: qty,
+    unit: t.unitType === 'allow' ? 'allow' : t.unitType === 'item' ? 'item' : t.unitType === 'linear' ? 'lm' : 'm²',
+    unitRate: Math.round(t.unitRate * tier),
+    rateSource: 'rawlinsons' as const,
   };
 }
 
-function buildSolutionFromScope(
-  scope: RecognisedScope,
-  dims: Dimensions,
-  title: string,
-  multiplier: number,
-  answers: Record<string, string>
-): Solution {
-  const stages = buildStagesFromScope(scope, dims, multiplier, answers);
-  const tradeLines = buildTradeLines(stages);
-  const builderCost = stages.reduce((sum, item) => sum + item.builderCost, 0);
-  const clientCost = stages.reduce((sum, item) => sum + item.clientCost, 0);
-  const timelineDays = stages.reduce((sum, item) => sum + item.durationDays, 0);
-
-  return {
-    id: generateId(),
-    title,
-    description: `${title} — ${scope.categoryLabel} scope`,
-    builderCost,
-    clientCost,
-    timelineDays,
-    stages,
-    tradeLines,
-  };
-}
-
-// ─── Public API ─────────────────────────────────────────────────────────────
-
-/** Legacy room-based solution generation (backward compatible) */
-export function generateSolutions(
-  roomType: string,
-  dimensions: Dimensions,
-  answers?: Record<string, string>
-): Solution[] {
-  return [
-    buildSolution(roomType, dimensions, "Essential", 0.9, answers),
-    buildSolution(roomType, dimensions, "Standard", 1, answers),
-    buildSolution(roomType, dimensions, "Premium", 1.2, answers),
-  ];
-}
-
-/** New AI-scope-based solution generation (Rawlinsons/Cordell methodology) */
+// Generate solutions from a recognised scope (new category-based system)
 export function generateSolutionsFromScope(
   scope: RecognisedScope,
-  dimensions: Dimensions,
+  dimensions: { width: number; length: number; height: number },
   answers: Record<string, string>
 ): Solution[] {
-  return [
-    buildSolutionFromScope(scope, dimensions, "Essential", 0.9, answers),
-    buildSolutionFromScope(scope, dimensions, "Standard", 1.0, answers),
-    buildSolutionFromScope(scope, dimensions, "Premium", 1.2, answers),
+  const area = dimensions.width * dimensions.length;
+  const templates = scope.category?.stages || [];
+
+  // Apply question cost effects
+  let adjustedTemplates = [...templates];
+  if (scope.category?.questions) {
+    for (const q of scope.category.questions) {
+      const answer = answers[q.id];
+      if (answer && q.costEffect) {
+        if (q.costEffect.type === 'add-stage' && q.costEffect.condition === answer && q.costEffect.stage) {
+          adjustedTemplates.push(q.costEffect.stage);
+        }
+      }
+    }
+  }
+
+  const tiers = [
+    { name: 'Essential', factor: 0.85, desc: 'Budget-conscious scope' },
+    { name: 'Standard', factor: 1.0, desc: 'Industry standard specification' },
+    { name: 'Premium', factor: 1.25, desc: 'High-end finishes and materials' },
   ];
+
+  return tiers.map(tier => {
+    const stages = adjustedTemplates.map(t => templateToStage(t, area, tier.factor));
+    const totalCost = stages.reduce((sum, s) => sum + s.cost, 0);
+    const duration = stages.reduce((sum, s) => sum + s.duration, 0);
+
+    return {
+      id: generateId(),
+      name: tier.name,
+      totalCost,
+      duration,
+      stages,
+      description: `${tier.desc} for ${scope.category?.label || 'construction'}`,
+    };
+  });
 }
